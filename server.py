@@ -87,6 +87,8 @@ mcp = FastMCP(
     "sympy-mcp",
     dependencies=["sympy", "pydantic", "einsteinpy"],
     instructions="Provides access to the Sympy computer algebra system, which can perform symbolic manipulation of mathematical expressions.",
+    host="0.0.0.0",
+    port=8081,
 )
 
 @mcp.custom_route("/healthcheck", methods=["GET"])
