@@ -26,5 +26,5 @@ EXPOSE 8081
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
   CMD curl -f http://localhost:8081/healthcheck || exit 1
 
-# Run the server with SSE transport
-CMD ["uv", "run", "--with", "mcp[cli]", "--with", "sympy", "mcp", "run", "/app/server.py", "--transport", "sse"] 
+# Run the server with streamable-http transport
+CMD ["uv", "run", "python", "/app/server.py", "--transport", "streamable-http", "--mcp-host", "0.0.0.0", "--mcp-port", "8081"]
