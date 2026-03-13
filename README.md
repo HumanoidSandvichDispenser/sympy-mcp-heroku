@@ -443,6 +443,32 @@ $$
 -12
 $$
 
+## Example Interaction 3: Coupled ODE System (Fluid Dynamics)
+
+This example demonstrates solving a coupled system of ODEs and verifying the solution against an algebraic steady-state analysis — a task where LLMs typically hallucinate without a CAS to ground each step.
+
+**User**:
+
+> Use the sympy-mcp tools to solve this symbolically — do not compute by hand.
+>
+> Two cylindrical tanks are connected by a pipe. Tank 1 has cross-sectional area A₁ = 2 m² and receives a constant inflow of Q = 0.5 m³/s. Water drains from Tank 1 into Tank 2 through a pipe with flow rate proportional to the height difference: q₁₂ = k·(h₁ - h₂) where k = 0.3 m²/s. Tank 2 has cross-sectional area A₂ = 1 m² and drains to the outside at rate q₂ = k·h₂ with the same k.
+>
+> Set up and solve the coupled system of ODEs for the water heights h₁(t) and h₂(t), starting from empty tanks (h₁(0) = 0, h₂(0) = 0). Then find the steady-state heights as t → ∞ by solving the equilibrium equations algebraically, and verify they match the long-term solution of the ODEs.
+
+**Assistant**: (Internal tool chain)
+
+1. `intro_many` — introduce `t`, `k`, `A1`, `A2`, `Q` with real/positive assumptions
+2. `introduce_function` × 2 — introduce `h1(t)` and `h2(t)` as unknown functions
+3. `introduce_expression` × 2 — encode the mass-balance ODEs:
+
+$$A_1 \frac{dh_1}{dt} = Q - k(h_1 - h_2), \quad A_2 \frac{dh_2}{dt} = k(h_1 - h_2) - k h_2$$
+
+4. `substitute_expression` — substitute numeric values for `k`, `A1`, `A2`, `Q`
+5. `dsolve_ode` × 2 — solve the coupled system; apply initial conditions via `substitute_expression`
+6. `introduce_expression` × 2 — encode equilibrium equations (derivatives set to zero)
+7. `solve_linear_system` — solve the 2×2 algebraic system for `h1*`, `h2*`
+8. `print_latex_expression` — display both the time-domain solution and the steady-state values
+
 ## Security Disclaimer
 
 This server runs on your computer and gives the language model access to run Python logic. Notably it uses Sympy's `parse_expr` to parse mathematical expressions, which is uses `eval` under the hood, effectively allowing arbitrary code execution. By running the server, you are trusting the code that Claude generates. Running in the Docker image is slightly safer, but it's still a good idea to review the code before running it.
