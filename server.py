@@ -1,7 +1,11 @@
-# A stateful MCP server that holds a sympy sesssion, with symbol table of variables
+# A stateful MCP server that holds a sympy session, with symbol table of variables
 # that can be used in the tools API to define and manipulate expressions.
 
 from mcp.server.fastmcp import FastMCP
+from starlette.requests import Request
+from starlette.responses import JSONResponse, Response
+import httpx
+import json
 import sympy
 import argparse
 import logging
@@ -83,7 +87,56 @@ mcp = FastMCP(
     "sympy-mcp",
     dependencies=["sympy", "pydantic", "einsteinpy"],
     instructions="Provides access to the Sympy computer algebra system, which can perform symbolic manipulation of mathematical expressions.",
+    host="0.0.0.0",
+    port=8081,
 )
+
+@mcp.custom_route("/healthcheck", methods=["GET"])
+async def healthcheck(request: Request) -> Response:
+    try:
+        port = mcp.settings.port
+        url = f"http://127.0.0.1:{port}/mcp"
+        headers = {"Accept": "application/json, text/event-stream"}
+
+        async with httpx.AsyncClient() as client:
+            init = await client.post(url, json={
+                "jsonrpc": "2.0", "id": 1, "method": "initialize",
+                "params": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {"name": "healthcheck", "version": "1.0"},
+                },
+            }, headers=headers)
+            session_id = init.headers.get("mcp-session-id")
+
+            req_headers = {**headers}
+            if session_id:
+                req_headers["mcp-session-id"] = session_id
+
+            resp = await client.post(url, json={
+                "jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {},
+            }, headers=req_headers)
+
+            # streamable-http may return SSE (text/event-stream) or plain JSON
+            content_type = resp.headers.get("content-type", "")
+            if "text/event-stream" in content_type:
+                data = None
+                for line in resp.text.splitlines():
+                    if line.startswith("data: "):
+                        data = json.loads(line[6:])
+                        break
+                tools = (data or {}).get("result", {}).get("tools", [])
+            else:
+                tools = resp.json().get("result", {}).get("tools", [])
+
+            # Close the session to avoid accumulating orphaned sessions
+            if session_id:
+                await client.delete(url, headers={"mcp-session-id": session_id})
+
+            return JSONResponse({"status": "ok", "tool_count": len(tools)})
+    except Exception as e:
+        return JSONResponse({"status": "error", "detail": str(e)}, status_code=500)
+
 
 # Global store for sympy variables and expressions
 local_vars: Dict[str, sympy.Symbol] = {}
@@ -1839,19 +1892,20 @@ def main():
     parser.add_argument(
         "--mcp-host",
         type=str,
-        default="127.0.0.1",
-        help="Host to run MCP server on (only used for sse), default: 127.0.0.1",
+        default="0.0.0.0",
+        help="Host to bind for HTTP transports (default: 0.0.0.0)",
     )
     parser.add_argument(
         "--mcp-port",
         type=int,
-        help="Port to run MCP server on (only used for sse), default: 8081",
+        default=8081,
+        help="Port to bind for HTTP transports (default: 8081)",
     )
     parser.add_argument(
         "--transport",
         type=str,
         default="stdio",
-        choices=["stdio", "sse"],
+        choices=["stdio", "sse", "streamable-http"],
         help="Transport protocol for MCP, default: stdio",
     )
     args = parser.parse_args()
@@ -1859,31 +1913,24 @@ def main():
     # Call to initialize units
     initialize_units()
 
-    if args.transport == "sse":
+    if args.transport in ("sse", "streamable-http"):
         try:
-            # Set up logging
-            log_level = logging.INFO
-            logging.basicConfig(level=log_level)
-            logging.getLogger().setLevel(log_level)
+            logging.basicConfig(level=logging.INFO)
+            logging.getLogger("httpx").setLevel(logging.WARNING)
 
-            # Configure MCP settings
             mcp.settings.log_level = "INFO"
-            if args.mcp_host:
-                mcp.settings.host = args.mcp_host
-            else:
-                mcp.settings.host = "127.0.0.1"
+            mcp.settings.host = args.mcp_host
+            mcp.settings.port = args.mcp_port
 
-            if args.mcp_port:
-                mcp.settings.port = args.mcp_port
+            if args.transport == "sse":
+                endpoint = f"http://{mcp.settings.host}:{mcp.settings.port}/sse"
             else:
-                mcp.settings.port = 8081
+                endpoint = f"http://{mcp.settings.host}:{mcp.settings.port}/mcp"
 
-            logger.info(
-                f"Starting MCP server on http://{mcp.settings.host}:{mcp.settings.port}/sse"
-            )
+            logger.info(f"Starting MCP server on {endpoint}")
             logger.info(f"Using transport: {args.transport}")
 
-            mcp.run(transport="sse")
+            mcp.run(transport=args.transport)
         except KeyboardInterrupt:
             logger.info("Server stopped by user")
     else:
